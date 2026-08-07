@@ -1,0 +1,22 @@
+[Unit]
+Description=Discord GitHub Bot
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=discordbot
+WorkingDirectory=/opt/discord-github-bot
+ExecStartPre=-/usr/bin/docker stop discord-github-bot
+ExecStartPre=-/usr/bin/docker rm discord-github-bot
+ExecStart=/usr/bin/docker run --rm \
+  --name discord-github-bot \
+  --env-file /opt/discord-github-bot/.env \
+  -p 3000:3000 \
+  discord-github-bot
+ExecStop=/usr/bin/docker stop discord-github-bot
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

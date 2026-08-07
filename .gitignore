@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.pem
+*.json
+!package.json
+!tsconfig.json
+service-account*.json
