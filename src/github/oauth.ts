@@ -1,4 +1,3 @@
-import { request } from "@octokit/request";
 import { config } from "../config";
 import { encrypt, decrypt } from "../utils/crypto";
 import { logger } from "../utils/logger";
@@ -12,7 +11,7 @@ export function makeOAuthUrl(discordUserId: string): string {
   const params = new URLSearchParams({
     client_id: config.github.clientId,
     redirect_uri: `${config.server.baseUrl}/oauth/github/callback`,
-    scope: "repo",
+    scope: "repo project",
     state,
   });
   return `${OAUTH_AUTHORIZE_URL}?${params.toString()}`;
@@ -46,30 +45,42 @@ export interface OAuthTokenResponse {
 }
 
 export async function exchangeCode(code: string): Promise<OAuthTokenResponse> {
-  const res = await request("POST /login/oauth/access_token", {
-    baseUrl: "",
-    client_id: config.github.clientId,
-    client_secret: config.github.clientSecret,
-    code,
-    headers: { accept: "application/json" },
+  const res = await fetch(OAUTH_ACCESS_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      client_id: config.github.clientId,
+      client_secret: config.github.clientSecret,
+      code,
+    }),
   });
-  if (res.data.error) {
-    throw new Error(`OAuth exchange error: ${res.data.error_description ?? res.data.error}`);
+  const data = (await res.json()) as any;
+  if (data.error) {
+    throw new Error(`OAuth exchange error: ${data.error_description ?? data.error}`);
   }
-  return res.data as OAuthTokenResponse;
+  return data as OAuthTokenResponse;
 }
 
 export async function refreshUserToken(refreshToken: string): Promise<OAuthTokenResponse> {
-  const res = await request("POST /login/oauth/access_token", {
-    baseUrl: "",
-    client_id: config.github.clientId,
-    client_secret: config.github.clientSecret,
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    headers: { accept: "application/json" },
+  const res = await fetch(OAUTH_ACCESS_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      client_id: config.github.clientId,
+      client_secret: config.github.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
   });
-  if (res.data.error) {
-    throw new Error(`Token refresh error: ${res.data.error_description ?? res.data.error}`);
+  const data = (await res.json()) as any;
+  if (data.error) {
+    throw new Error(`Token refresh error: ${data.error_description ?? data.error}`);
   }
-  return res.data as OAuthTokenResponse;
+  return data as OAuthTokenResponse;
 }

@@ -1,4 +1,4 @@
-import { db } from "./firestore";
+import { loadDb, saveDb } from "./firestore";
 
 export interface ThreadIssue {
   threadId: string;
@@ -10,14 +10,42 @@ export interface ThreadIssue {
   repoName: string;
 }
 
-const coll = () => db.collection("threadIssues");
-
 export async function getThreadIssue(threadId: string): Promise<ThreadIssue | null> {
-  const doc = await coll().doc(threadId).get();
-  if (!doc.exists) return null;
-  return doc.data() as ThreadIssue;
+  const db = loadDb();
+  return db.threadIssues[threadId] || null;
 }
 
 export async function setThreadIssue(entry: ThreadIssue): Promise<void> {
-  await coll().doc(entry.threadId).set(entry);
+  const db = loadDb();
+  // Remove any stale thread mappings for the same repo and issue number
+  for (const tid of Object.keys(db.threadIssues)) {
+    const item = db.threadIssues[tid];
+    if (
+      item.repoOwner.toLowerCase() === entry.repoOwner.toLowerCase() &&
+      item.repoName.toLowerCase() === entry.repoName.toLowerCase() &&
+      item.issueNumber === entry.issueNumber
+    ) {
+      delete db.threadIssues[tid];
+    }
+  }
+  db.threadIssues[entry.threadId] = entry;
+  saveDb(db);
 }
+
+export async function getThreadIssueByNumber(
+  repoOwner: string,
+  repoName: string,
+  issueNumber: number,
+): Promise<ThreadIssue | null> {
+  const db = loadDb();
+  const issues = Object.values(db.threadIssues) as ThreadIssue[];
+  return (
+    issues.find(
+      (i) =>
+        i.repoOwner.toLowerCase() === repoOwner.toLowerCase() &&
+        i.repoName.toLowerCase() === repoName.toLowerCase() &&
+        i.issueNumber === issueNumber,
+    ) || null
+  );
+}
+

@@ -39,6 +39,14 @@ export const config = {
     projectId: optional("FIRESTORE_PROJECT_ID", ""),
     keyFilename: optional("GOOGLE_APPLICATION_CREDENTIALS", ""),
   },
+  watch: {
+    enabled: optional("WATCH_ENABLED", "true") !== "false",
+    repo: optional("WATCH_REPO", "hpcac/2026-APAC-HPC-AI"),
+    intervalMinutes: parseInt(optional("WATCH_INTERVAL_MINUTES", "60"), 10),
+    // 預設相對於程序 cwd（pm2 部署下 = ~/discord-github-bot）；Docker 部署請設成 /data/repos
+    cloneDir: optional("WATCH_CLONE_DIR", "./repos"),
+    notifyOnPrivate: optional("WATCH_NOTIFY_ON_PRIVATE", "true") !== "false",
+  },
   encryptionKey: required("ENCRYPTION_KEY"),
   server: {
     port: parseInt(optional("PORT", "3000"), 10),

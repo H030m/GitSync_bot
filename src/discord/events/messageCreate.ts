@@ -12,14 +12,29 @@ export function onMessageCreate(client: Client): void {
     const threadIssue = await getThreadIssue(channel.id);
     if (!threadIssue) return;
 
-    if (!message.content.trim()) return;
+    let fullContent = message.content.trim();
+
+    if (message.attachments.size > 0) {
+      const attachmentMarkdown = message.attachments
+        .map((att) => {
+          const isImage =
+            att.contentType?.startsWith("image/") ||
+            /\.(png|jpe?g|gif|webp|svg)$/i.test(att.name);
+          return isImage ? `![${att.name}](${att.url})` : `[📎 ${att.name}](${att.url})`;
+        })
+        .join("\n\n");
+
+      fullContent = fullContent ? `${fullContent}\n\n${attachmentMarkdown}` : attachmentMarkdown;
+    }
+
+    if (!fullContent.trim()) return;
 
     try {
       await addIssueComment(
         threadIssue.repoOwner,
         threadIssue.repoName,
         threadIssue.issueNumber,
-        message.content,
+        fullContent,
         message.author.id,
         message.author.username,
       );

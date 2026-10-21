@@ -5,8 +5,33 @@ import { definition as linkRepo } from "./commands/linkRepo";
 import { definition as unlinkRepo } from "./commands/unlinkRepo";
 import { definition as linkGithub } from "./commands/linkGithub";
 import { definition as issue } from "./commands/issue";
+import { definition as exportChat } from "./commands/exportChat";
+import { definition as importIssue } from "./commands/importIssue";
+import { definition as setPrefix } from "./commands/setPrefix";
+import { definition as watchRepo } from "./commands/watchRepo";
+import { definition as help } from "./commands/help";
+import { definition as quota } from "./commands/quota";
+import { definition as quotaDaily } from "./commands/quotaDaily";
+import { definition as quotaAlert } from "./commands/quotaAlert";
+import { definition as linkDiscord } from "./commands/linkDiscord";
+import { definition as quotaAddMember } from "./commands/quotaAddMember";
 
-const commands = [linkRepo.toJSON(), unlinkRepo.toJSON(), linkGithub.toJSON(), issue.toJSON()];
+const commands = [
+  linkRepo.toJSON(),
+  unlinkRepo.toJSON(),
+  linkGithub.toJSON(),
+  issue.toJSON(),
+  exportChat.toJSON(),
+  importIssue.toJSON(),
+  setPrefix.toJSON(),
+  watchRepo.toJSON(),
+  help.toJSON(),
+  quota.toJSON(),
+  quotaDaily.toJSON(),
+  quotaAlert.toJSON(),
+  linkDiscord.toJSON(),
+  quotaAddMember.toJSON(),
+];
 
 async function main() {
   const rest = new REST({ version: "10" }).setToken(config.discord.token);

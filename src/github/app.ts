@@ -1,13 +1,13 @@
-import { App } from "@octokit/app";
-import { Octokit } from "@octokit/core";
+import type { App } from "@octokit/app";
+import type { Octokit } from "@octokit/core";
 import { config } from "../config";
 import { logger } from "../utils/logger";
 
 let _app: App | null = null;
-const tokenCache = new Map<number, { token: string; expiresAt: number }>();
 
-function getApp(): App {
+async function getApp(): Promise<App> {
   if (!_app) {
+    const { App } = await (Function('return import("@octokit/app")')() as Promise<typeof import("@octokit/app")>);
     _app = new App({
       appId: config.github.appId,
       privateKey: config.github.privateKey,
@@ -16,24 +16,33 @@ function getApp(): App {
   return _app;
 }
 
-export async function getInstallationOctokit(): Promise<Octokit> {
-  const now = Date.now();
-  const cached = tokenCache.get(config.github.installationId);
-  if (cached && cached.expiresAt > now + 60_000) {
-    return new Octokit({ auth: cached.token });
+async function getActiveInstallationId(): Promise<number> {
+  const app = await getApp();
+  try {
+    const res = await app.octokit.request("GET /app/installations");
+    if (res.data && res.data.length > 0) {
+      logger.info(
+        "app",
+        `Active installations: ${res.data.map((i: any) => `${i.account?.login} (ID: ${i.id})`).join(", ")}`,
+      );
+      return res.data[res.data.length - 1].id;
+    }
+  } catch (e) {
+    logger.error("app", "Failed to fetch installations dynamically", e);
   }
-  const app = getApp();
-  const octokit = await app.getInstallationOctokit(config.github.installationId);
-  const auth = (await octokit.auth()) as { token: string; expiresAt: string };
-  tokenCache.set(config.github.installationId, {
-    token: auth.token,
-    expiresAt: new Date(auth.expiresAt).getTime(),
-  });
-  return octokit;
+  return config.github.installationId;
+}
+
+export async function getInstallationOctokit(): Promise<Octokit> {
+  const app = await getApp();
+  const installationId = await getActiveInstallationId();
+  return (await app.getInstallationOctokit(installationId)) as unknown as Octokit;
 }
 
 export async function getInstallationToken(): Promise<string> {
-  const octokit = await getInstallationOctokit();
-  const auth = (await octokit.auth()) as { token: string };
+  const app = await getApp();
+  const installationId = await getActiveInstallationId();
+  const octokit = await app.getInstallationOctokit(installationId);
+  const auth = (await octokit.auth({ type: "installation" })) as { token: string };
   return auth.token;
 }

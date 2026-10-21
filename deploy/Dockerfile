@@ -7,6 +7,7 @@ COPY src/ ./src/
 RUN npx tsc
 
 FROM node:20.20.2-alpine
+RUN apk add --no-cache git coreutils
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production

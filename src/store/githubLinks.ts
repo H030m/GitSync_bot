@@ -1,4 +1,4 @@
-import { db } from "./firestore";
+import { loadDb, saveDb } from "./firestore";
 import { encrypt, decrypt } from "../utils/crypto";
 import { config } from "../config";
 import { logger } from "../utils/logger";
@@ -11,16 +11,15 @@ export interface GitHubLink {
   expiresAt: string;
 }
 
-const coll = () => db.collection("githubLinks");
-
 export async function getGitHubLink(discordUserId: string): Promise<GitHubLink | null> {
-  const doc = await coll().doc(discordUserId).get();
-  if (!doc.exists) return null;
-  return doc.data() as GitHubLink;
+  const db = loadDb();
+  return db.githubLinks[discordUserId] || null;
 }
 
 export async function setGitHubLink(link: GitHubLink): Promise<void> {
-  await coll().doc(link.discordUserId).set(link);
+  const db = loadDb();
+  db.githubLinks[link.discordUserId] = link;
+  saveDb(db);
 }
 
 export function decryptTokens(link: GitHubLink): { accessToken: string; refreshToken: string } {
@@ -34,3 +33,16 @@ export function decryptTokens(link: GitHubLink): { accessToken: string; refreshT
     throw new Error("Token decryption failed");
   }
 }
+
+export async function getDiscordUserByGitHub(githubLogin: string): Promise<string | null> {
+  try {
+    const db = loadDb();
+    const links = Object.values(db.githubLinks) as GitHubLink[];
+    const found = links.find((l) => l.githubLogin.toLowerCase() === githubLogin.toLowerCase());
+    return found ? found.discordUserId : null;
+  } catch (e) {
+    logger.error("githubLinks", `Failed to get Discord user for GitHub login ${githubLogin}`, e);
+    return null;
+  }
+}
+
