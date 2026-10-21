@@ -6,3 +6,10 @@ dist/
 !package.json
 !tsconfig.json
 service-account*.json
+
+# 本機私有／產生物
+data/
+repos/
+scratch/
+src.bak-*/
+*.bak-*

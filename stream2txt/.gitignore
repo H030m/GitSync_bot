@@ -1,0 +1,9 @@
+# 轉錄環境的本機產物（見根目錄 README §7）
+.venv/
+models/
+cache/
+upstream/
+research/
+NOTES.md
+__pycache__/
+*.bak-*

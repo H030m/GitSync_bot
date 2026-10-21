@@ -15,6 +15,7 @@ import { definition as quotaDaily } from "./commands/quotaDaily";
 import { definition as quotaAlert } from "./commands/quotaAlert";
 import { definition as linkDiscord } from "./commands/linkDiscord";
 import { definition as quotaAddMember } from "./commands/quotaAddMember";
+import { definition as liveAlert } from "./commands/liveAlert";
 
 const commands = [
   linkRepo.toJSON(),
@@ -31,6 +32,7 @@ const commands = [
   quotaAlert.toJSON(),
   linkDiscord.toJSON(),
   quotaAddMember.toJSON(),
+  liveAlert.toJSON(),
 ];
 
 async function main() {

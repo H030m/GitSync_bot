@@ -15,6 +15,8 @@ export interface DbSchema {
   discordLinks: Record<string, any>;
   quotaAlertNotified: Record<string, any>;
   teamMembers: Record<string, any>;
+  liveAlerts: Record<string, any>;
+  liveAskAllowed: Record<string, any>;
 }
 
 function emptyDb(): DbSchema {
@@ -28,6 +30,8 @@ function emptyDb(): DbSchema {
     discordLinks: {},
     quotaAlertNotified: {},
     teamMembers: {},
+    liveAlerts: {},
+    liveAskAllowed: {},
   };
 }
 
@@ -54,6 +58,8 @@ export function loadDb(): DbSchema {
       discordLinks: parsed.discordLinks || fallback.discordLinks,
       quotaAlertNotified: parsed.quotaAlertNotified || fallback.quotaAlertNotified,
       teamMembers: parsed.teamMembers || fallback.teamMembers,
+      liveAlerts: parsed.liveAlerts || fallback.liveAlerts,
+      liveAskAllowed: parsed.liveAskAllowed || fallback.liveAskAllowed,
     };
   } catch (e) {
     logger.error("localDb", "Error loading db, using fallback", e);

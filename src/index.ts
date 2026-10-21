@@ -4,6 +4,7 @@ import { createClient, startClient } from "./discord/client";
 import { createApp } from "./server/httpServer";
 import { restoreWatchers } from "./watch/repoWatcher";
 import { startQuotaScheduler } from "./hpc/scheduler";
+import { restoreLiveAlerts } from "./live/liveAlertManager";
 
 async function main() {
   logger.info("main", "Starting Discord GitHub Bot...");
@@ -18,6 +19,12 @@ async function main() {
   await startClient(client);
 
   await restoreWatchers(client);
+
+  try {
+    await restoreLiveAlerts(client);
+  } catch (e) {
+    logger.error("main", "restoreLiveAlerts failed (bot continues)", e);
+  }
 
   startQuotaScheduler(client);
 }

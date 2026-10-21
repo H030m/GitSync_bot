@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import fs from "fs";
+import path from "path";
 import { logger } from "./utils/logger";
 
 dotenv.config();
@@ -46,6 +47,18 @@ export const config = {
     // 預設相對於程序 cwd（pm2 部署下 = ~/discord-github-bot）；Docker 部署請設成 /data/repos
     cloneDir: optional("WATCH_CLONE_DIR", "./repos"),
     notifyOnPrivate: optional("WATCH_NOTIFY_ON_PRIVATE", "true") !== "false",
+  },
+  // YouTube 直播即時轉錄（/live-alert）；預設值對應 stream2txt/ 目錄的標準安裝
+  liveAlert: {
+    python: optional("LIVE_ALERT_PYTHON", path.resolve(process.cwd(), "stream2txt/.venv/bin/python")),
+    worker: optional("LIVE_ALERT_WORKER", path.resolve(process.cwd(), "stream2txt/worker.py")),
+    model: optional("LIVE_ALERT_MODEL", "small"), // small 比 base 更常正確寫出 Quiz 這個字（見 README §7）
+    language: optional("LIVE_ALERT_LANGUAGE", "auto"),
+    refreshSeconds: parseInt(optional("LIVE_ALERT_REFRESH_SECONDS", "25"), 10),
+    maxSessions: parseInt(optional("LIVE_ALERT_MAX_SESSIONS", "1"), 10), // 一次只追一個直播：轉錄吃 CPU，兩個以上會拖垮整台
+    askScript: optional("LIVE_ALERT_ASK", path.resolve(process.cwd(), "stream2txt/ask_once.py")),
+    // 擁有者的 Discord user ID（ask / ideas / ask-access 的管理者）；留空＝沒有人是擁有者，這些指令都用不了
+    ownerId: optional("LIVE_ALERT_OWNER_ID", ""),
   },
   encryptionKey: required("ENCRYPTION_KEY"),
   server: {

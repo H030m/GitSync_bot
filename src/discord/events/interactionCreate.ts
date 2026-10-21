@@ -44,6 +44,20 @@ import {
 } from "../../hpc/quotaFetcher";
 import { getTeamMembers, addTeamMember, getTeamMember } from "../../store/teamMembers";
 import { buildQuotaReport } from "../../hpc/quotaReport";
+import {
+  startLiveAlert,
+  stopLiveAlert,
+  askFromTranscript,
+} from "../../live/liveAlertManager";
+import { getSession, listChannelSessions } from "../../store/liveAlerts";
+import {
+  isAskAllowed,
+  addAskAllowed,
+  removeAskAllowed,
+  listAskAllowed,
+  ALL_SCOPES,
+  AskScope,
+} from "../../store/liveAskAllowed";
 import { checkQuotaAlerts, DEFAULT_ALERT_THRESHOLD } from "../../hpc/quotaAlerts";
 import {
   addDailyChannel,
@@ -761,6 +775,194 @@ async function handleQuotaAlert(interaction: ChatInputCommandInteraction): Promi
   });
 }
 
+function formatLiveTargets(userIds: string[], roleIds: string[]): string {
+  return [...userIds.map((id) => `<@${id}>`), ...roleIds.map((id) => `<@&${id}>`)].join(" ");
+}
+
+async function handleLiveAlert(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!interaction.guild) {
+    await interaction.reply({ content: "此指令僅能在伺服器內使用。", ephemeral: true });
+    return;
+  }
+  const sub = interaction.options.getSubcommand();
+
+  if (sub === "start") {
+    await interaction.deferReply();
+    try {
+      const session = await startLiveAlert(interaction.client, {
+        guildId: interaction.guild.id,
+        channelId: interaction.channelId,
+        url: interaction.options.getString("url", true),
+        targetsRaw: interaction.options.getString("targets", true),
+        createdBy: interaction.user.id,
+      });
+      const deadlineUnix = Math.floor(new Date(session.deadline).getTime() / 1000);
+      await interaction.editReply({
+        content:
+          `✅ 已開始直播轉錄\n` +
+          `• 工作 ID：\`${session.id}\`\n` +
+          `• 直播：${session.url}\n` +
+          `• 通知對象：${formatLiveTargets(session.userIds, session.roleIds)}\n` +
+          `• 結束時間：<t:${deadlineUnix}:f>（<t:${deadlineUnix}:R>）\n` +
+          `偵測到可能要考試時會在本頻道 @ 對象；結束時會上傳逐字稿。`,
+        allowedMentions: { parse: [] },
+      });
+    } catch (e: any) {
+      logger.warn("liveAlert", `start failed: ${e?.message ?? e}`);
+      await interaction.editReply({
+        content: `❌ ${e?.message ?? "啟動失敗"}`,
+        allowedMentions: { parse: [] },
+      });
+    }
+    return;
+  }
+
+  if (sub === "ask-access") {
+    if (interaction.user.id !== config.liveAlert.ownerId) {
+      await interaction.reply({ content: "只有擁有者可以管理這個名單。", ephemeral: true });
+      return;
+    }
+    const action = interaction.options.getString("action", true);
+    const target = interaction.options.getUser("user");
+    const scopeOpt = interaction.options.getString("scope");
+    const scopes: AskScope[] = scopeOpt === "ask" || scopeOpt === "ideas" ? [scopeOpt] : ALL_SCOPES;
+    const scopeText = (s: AskScope[]) => s.map((x) => `\`${x}\``).join("、");
+    if (action === "list") {
+      const list = listAskAllowed();
+      await interaction.reply({
+        content: list.length
+          ? `被允許的人（擁有者另計，各自 5 小時後到期）：\n` +
+            list
+              .map(
+                (x) =>
+                  `• <@${x.userId}>：${scopeText(x.scopes)}（<t:${Math.floor(new Date(x.expiresAt).getTime() / 1000)}:R> 到期）`,
+              )
+              .join("\n")
+          : "目前沒有額外的人（只有擁有者）。",
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    if (!target) {
+      await interaction.reply({ content: "請用 `user` 選一個使用者。", ephemeral: true });
+      return;
+    }
+    if (target.bot || target.id === config.liveAlert.ownerId) {
+      await interaction.reply({ content: "不需要也不能新增機器人或擁有者本人。", ephemeral: true });
+      return;
+    }
+    if (action === "add") {
+      const r = addAskAllowed(target.id, interaction.user.id, scopes);
+      const exp = Math.floor(new Date(r.expiresAt).getTime() / 1000);
+      await interaction.reply({
+        content:
+          `✅ <@${target.id}> 現在可以使用：${scopeText(r.scopes)}，<t:${exp}:R>（<t:${exp}:f>）到期。` +
+          `重新 add 一次會重新計 5 小時。注意：他使用會用掉這台機器登入的 Claude 帳號額度。`,
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+    } else {
+      const left = removeAskAllowed(target.id, scopes);
+      await interaction.reply({
+        content:
+          left === null
+            ? `<@${target.id}> 本來就不在名單裡。`
+            : left.length
+              ? `✅ 已移除 ${scopeText(scopes)}，<@${target.id}> 還保有：${scopeText(left)}。`
+              : `✅ 已移除 <@${target.id}>。`,
+        ephemeral: true,
+        allowedMentions: { parse: [] },
+      });
+    }
+    return;
+  }
+
+  if (sub === "ask" || sub === "ideas") {
+    if (interaction.user.id !== config.liveAlert.ownerId && !isAskAllowed(interaction.user.id, sub)) {
+      await interaction.reply({ content: `你沒有權限使用 \`/live-alert ${sub}\`。`, ephemeral: true });
+      return;
+    }
+    const id = interaction.options.getString("id");
+    const candidates = id
+      ? [getSession(id)].filter((s) => s && s.channelId === interaction.channelId)
+      : listChannelSessions(interaction.channelId, false).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    const session = candidates[0];
+    if (!session) {
+      await interaction.reply({ content: id ? `本頻道找不到工作 \`${id}\`。` : "本頻道沒有直播轉錄工作。", ephemeral: true });
+      return;
+    }
+    // ask：公開（大家都看得到）；ideas：只有自己看得到
+    const isPublic = sub === "ask";
+    await interaction.deferReply({ ephemeral: !isPublic });
+    try {
+      const answer =
+        sub === "ideas"
+          ? await askFromTranscript(session, "", ["--ideas", String(interaction.options.getInteger("count") ?? 5)])
+          : await askFromTranscript(session, interaction.options.getString("question", true));
+      await interaction.editReply({
+        content: `${answer.slice(0, 1850)}\n-# 依據工作 \`${session.id}\` 的逐字稿${isPublic ? `｜提問者 <@${interaction.user.id}>` : ""}`,
+        allowedMentions: { parse: [] },
+      });
+    } catch (e: any) {
+      logger.warn("liveAlert", `${sub} failed: ${e?.message ?? e}`);
+      const msg = `❌ ${e?.message ?? "回答失敗"}`;
+      if (isPublic) {
+        // 公開的回覆已經送出「思考中」；錯誤只給提問的人看，不要讓全頻道看到
+        await interaction.deleteReply().catch(() => undefined);
+        await interaction.followUp({ content: msg, ephemeral: true, allowedMentions: { parse: [] } });
+      } else {
+        await interaction.editReply({ content: msg, allowedMentions: { parse: [] } });
+      }
+    }
+    return;
+  }
+
+  if (sub === "stop") {
+    const id = interaction.options.getString("id");
+    let targets;
+    if (id) {
+      const s = getSession(id);
+      if (!s || s.channelId !== interaction.channelId || s.status !== "running") {
+        await interaction.reply({ content: `找不到本頻道執行中的工作 \`${id}\`。`, ephemeral: true });
+        return;
+      }
+      targets = [s];
+    } else {
+      targets = listChannelSessions(interaction.channelId, true);
+    }
+    if (targets.length === 0) {
+      await interaction.reply({ content: "本頻道目前沒有執行中的直播轉錄工作。", ephemeral: true });
+      return;
+    }
+    for (const s of targets) stopLiveAlert(s.id, "manual");
+    await interaction.reply({
+      content: `✅ 已停止 ${targets.length} 個工作（${targets.map((s) => `\`${s.id}\``).join("、")}），逐字稿稍後會上傳到本頻道。`,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  // status
+  const running = listChannelSessions(interaction.channelId, true);
+  if (running.length === 0) {
+    await interaction.reply({ content: "本頻道目前沒有執行中的直播轉錄工作。", ephemeral: true });
+    return;
+  }
+  const lines = running.map((s) => {
+    const unix = Math.floor(new Date(s.deadline).getTime() / 1000);
+    return (
+      `• \`${s.id}\` ${s.url}\n` +
+      `　對象：${formatLiveTargets(s.userIds, s.roleIds)}｜結束：<t:${unix}:R>｜考試警報 ${s.quizCount} 次`
+    );
+  });
+  await interaction.reply({
+    content: `🎙️ 本頻道執行中的直播轉錄：\n${lines.join("\n")}`,
+    allowedMentions: { parse: [] },
+    ephemeral: true,
+  });
+}
+
 async function handleLinkDiscord(interaction: ChatInputCommandInteraction): Promise<void> {
   const username = interaction.user.username.toLowerCase();
   const members = await getTeamMembers();
@@ -965,6 +1167,16 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
           "**範例**：\n" +
           "`/quota-add-member hpc_account: u1234567 name: 小明 dc_id: some_username`",
       },
+      {
+        name: "1️⃣4️⃣ `/live-alert` — YouTube 直播即時轉錄＋考試警報",
+        value:
+          "**說明**：註冊一個 YouTube 直播，bot 會即時轉錄，偵測到可能要考試時在**本頻道** @ 你指定的對象；" +
+          "5 小時後自動關閉，結束時會把逐字稿 `.txt` 上傳到本頻道。\n" +
+          "**子指令**：`start url targets`｜`stop [id]`｜`status`｜`ask question [id]`（公開回答）｜`ideas [count]`（提問建議，只有自己看到）｜`ask-access`（限擁有者，可分別開 ask／ideas；被允許的人 5 小時後自動失效）\n" +
+          "**範例**：\n" +
+          "`/live-alert start url: https://www.youtube.com/watch?v=xxxx targets: @小明 @某身分組`\n" +
+          "`/live-alert stop`",
+      },
     ],
     footer: {
       text: "GitSync Bot • GitHub & Discord 雙向自動化同步服務",
@@ -1019,6 +1231,9 @@ export function onInteractionCreate(client: Client): void {
           break;
         case "link-discord":
           await handleLinkDiscord(interaction);
+          break;
+        case "live-alert":
+          await handleLiveAlert(interaction);
           break;
         case "quota-add-member":
           await handleQuotaAddMember(interaction);

@@ -12,6 +12,7 @@
 4. **討論串訊息同步成 issue 留言**：已綁定討論串內的一般訊息，自動同步成 GitHub issue 的 comment。
 5. **指派/取消指派負責人**：使用 `/issue assign` / `/issue unassign` 指派（有連動 GitHub 帳號的）Discord 使用者到 issue。
 6. **GitHub 帳號連動**：使用 `/link-github` 進行 GitHub OAuth 授權，讓 bot 能代理使用者發 issue/留言。
+7. **YouTube 直播轉錄＋考試警報**：使用 `/live-alert start` 註冊一個直播，bot 即時轉成文字，偵測到老師要出題時在頻道 @ 指定對象；5 小時後自動關閉並上傳逐字稿（見 §7）。
 
 ---
 
@@ -249,3 +250,87 @@ sudo systemctl restart discord-github-bot
 - [ ] 不支援 issue 被移出 Project（unlink）的處理
 - [ ] 沒有 Dashboard 或 Web UI 可以查看所有綁定關係
 - [ ] 使用者解除 GitHub OAuth 授權後，不會自動清除 Firestore 裡的 token（下次使用會 refresh 失敗自動降級用 App token）
+
+
+---
+
+## 7. 直播轉錄與考試警報（`/live-alert`）
+
+註冊一個 YouTube 直播，bot 會在伺服器上即時轉錄成文字；偵測到老師要出題（quiz）時，在**下指令的頻道** @ 你指定的使用者或身分組。工作持續 **5 小時**後自動關閉，結束（或手動停止、直播結束）時把完整逐字稿 `.txt` 上傳到該頻道。bot 重啟後，還沒到期的工作會自動接續（同一個 ID、同一個結束時間，逐字稿接著寫）。
+
+### 指令
+
+| 指令 | 誰能用 | 說明 |
+|------|--------|------|
+| `/live-alert start url targets` | 所有人 | 開始轉錄；`targets` 直接 @ 使用者或身分組（最多 25 個，至少 1 個）。只接受 youtube.com / youtu.be，且必須是**進行中的直播**（已結束的錄影會回報「這不是正在進行的直播」） |
+| `/live-alert stop [id]` | 所有人 | 停止本頻道的工作；不填 `id` 就全停 |
+| `/live-alert status` | 所有人 | 看本頻道的工作（只有自己看得到） |
+| `/live-alert ask question [id]` | 擁有者／被允許 `ask` 的人 | 根據逐字稿回答題目，**回答公開**，結尾註明提問者 |
+| `/live-alert ideas [count] [id]` | 擁有者／被允許 `ideas` 的人 | 根據老師最近講的內容，想幾個像普通學生會問的問題，**只有自己看得到** |
+| `/live-alert ask-access action user [scope]` | 只有擁有者 | 新增／移除／列出被允許的人；`scope` 可選 `ask`、`ideas` 或兩者（預設）。被允許的人 **5 小時後自動失效**，重新 add 會重新計時 |
+
+擁有者由環境變數 `LIVE_ALERT_OWNER_ID` 指定（Discord user ID）。留空則沒有人是擁有者，`ask` / `ideas` / `ask-access` 都不能用。同時只追蹤 `LIVE_ALERT_MAX_SESSIONS` 個直播（預設 1），轉錄吃 CPU，不建議調高。
+
+### 偵測流程
+
+```
+YouTube 直播
+  → yt-dlp 取音訊串流（每 25 秒重新取一次簽章網址）
+  → ffmpeg 轉 16 kHz 單聲道，切成 5 秒一段
+  → faster-whisper（CPU、int8）轉文字，一句一行寫進逐字稿
+  → worker 每秒讀新增的行，三條路同時判斷：
+     ① 規則：alert.py 的單行關鍵字（小考／同學問題／點名抽問）與 Quiz 計分
+     ② 句型：「進行／進入 今天的第 N 個」「先／來／就 考 大家／一個…」（Whisper 把 Quiz 聽成什麼字都抓得到）
+     ③ LLM：每 15 秒把最近 90 秒逐字稿交給 Claude（haiku），判斷是不是在宣布要同學作答的測驗（不需要出現 Quiz 字樣）
+  → 弱通知先複審 → bot 在頻道 @ 對象
+```
+
+- **複審**：「同學問題」、「小考」、以及「只靠 Quiz 這個字、沒有其他線索」的弱通知，通知前會先問 LLM；LLM 明確回答「不是出題」才擋，失敗或逾時一律照發。有「第 N 個」「接下來進入」等額外線索的通知、句型、LLM 自己的判斷都不複審。
+- **靜音**：通知過 quiz 之後 3 分鐘內不再通知「同學問題」（出題時老師會一直說「請同學回答」）。
+- **冷卻**：LLM 兩次通知間 3 分鐘；規則剛通知過 quiz 的 2 分鐘內 LLM 不重複；bot 端同類別 30 秒。
+- 以上數字與規則是用 6 堂、共 30 個 quiz 的課堂錄影調出來的（**樣本內**，標註由模型推定、未經人工逐一確認），換老師或換講法不保證一樣準。
+
+### 安裝轉錄環境（`stream2txt/`）
+
+worker 放在獨立的 `stream2txt/` 目錄，需要另外 clone 原本的 [Instant-text-translation](https://github.com/H030m/Instant-text-translation)（取其 `run.py`／`alert.py`／`ask.py`，不修改）：
+
+```bash
+sudo apt install -y ffmpeg          # 用系統套件的 ffmpeg
+cd stream2txt
+git clone https://github.com/H030m/Instant-text-translation.git upstream
+python3 -m venv .venv               # 或 uv venv
+.venv/bin/pip install -r requirements.txt
+# 先下載模型，之後 worker 不需要連網載入
+HF_HOME=cache/huggingface HUGGINGFACE_HUB_CACHE=models .venv/bin/python -c \
+  "from faster_whisper.utils import download_model as d; d('small', cache_dir='models')"
+```
+
+另外需要：
+- **Node.js**：yt-dlp 解析 YouTube 需要 JavaScript runtime，worker 直接用 bot 的 node。
+- **Claude Code CLI 且已登入**：LLM 第二關、`ask`、`ideas` 都是呼叫 `claude -p`，用的是**這台機器登入的帳號的額度**。LLM 第二關最多每 15 秒一次（5 小時上限約 1,200 次；單次呼叫實測約 5,500 輸入 tokens，這個數字只量過一次）。不想用就設 `STREAM2TXT_LLM=0`，只留規則偵測。
+- 所有快取（模型、yt-dlp、Hugging Face）都放在 `stream2txt/` 底下，不寫 `$HOME/.cache`；逐字稿放在 `data/live-alerts/`，建議目錄 `700`、檔案 `600`。
+
+### 環境變數
+
+見 `.env.example` 最後一段。`LIVE_ALERT_OWNER_ID`、`LIVE_ALERT_MODEL`（Whisper 模型，預設 `small`）、`LIVE_ALERT_LANGUAGE`（預設 `auto`）、`LIVE_ALERT_MAX_SESSIONS`、`STREAM2TXT_LLM`、`STREAM2TXT_LLM_MODEL` 等。
+
+### Worker 協定（bot ↔ `stream2txt/worker.py`）
+
+bot 用 `child_process.spawn` 啟動 worker（`--url --output --max-seconds --model --language --refresh-seconds`），逐字稿由 worker 以 append 模式寫進 `--output`。worker 在 **stdout 每行輸出一個 JSON**，非 JSON 的行會被忽略：
+
+| `type` | 欄位 | 意義 |
+|--------|------|------|
+| `status` | `message` | 只記 log |
+| `quiz` | `category`、`text`、`stream_time` | 要通知；`category` 如 `疑似 Quiz（…）`、`同學問題`、`小考`、`LLM 判斷` |
+| `error` | `message` | 記 warn log |
+| `end` | `reason`：`stream-ended`／`deadline`／`not-live` | 之後 worker 以 exit code 0 結束 |
+
+收到 SIGTERM 時 worker 會在 15 秒內收尾，否則被 SIGKILL。worker 異常結束（非 0）且還沒到期時，bot 30 秒後重試，最多 3 次。因為協定只有這幾行，worker 之後可以直接抽成獨立 repo 或換成別的實作。
+
+### 已知限制
+
+- 一個老師 5 個 quiz 以上的課，通知仍可能漏或多；不保證 100%。
+- 通知會比老師講的晚：YouTube 直播本身延遲（未實測，一般約 10–30 秒）＋ 5 秒切段與轉錄 ＋ LLM 輪詢最多 15 秒。規則與句型抓到的比 LLM 快。
+- 上游 `run.py` 的時間戳記在直播中會膨脹（每個 5 秒段重複累加偏移），逐字稿裡的秒數不是真實時間；worker 的 LLM 視窗用牆鐘時間，不受影響，但規則裡的計分視窗（40 秒）實際會變短。
+- 逐字稿的錯字很多，`ask` 的答案要自己再確認。
+
